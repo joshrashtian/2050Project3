@@ -47,7 +47,8 @@ int get_cmd(char *string) {
   return -1;
 }
 
-char *get_argument(char *ns) {
+char *get_argument(char *ns, int *extra) {
+  *extra = 0;
   if (ns == NULL)
     exit(1);
   // since we will only ever need one argument, we can outright just start
@@ -65,7 +66,14 @@ char *get_argument(char *ns) {
   char *start = ns;
   while (*ns != '\0' && *ns != ' ' && *ns != '\n')
     ns++;
-  *ns = '\0';
+  char *end = ns;
+
+  while (*ns == ' ')
+    ns++; // skip spaces after the argument
+  if (*ns != '\0' && *ns != '\n')
+    *extra = 1; // there's a second argument
+
+  *end = '\0';
   return start;
 }
 
@@ -100,10 +108,8 @@ int makeNode(struct inode *fs, uint32_t cwd, char *name, char type) {
     fprintf(stderr, "%s: missing name\n", type == 'd' ? "mkdir" : "touch");
     return -1;
   }
-  if (strlen(name) >= sizeof fs[0].name) {
-    fprintf(stderr, "%s: name too long\n", name);
-    return -1;
-  }
+  if (strlen(name) > 32)
+    name[32] = '\0';
 
   // making sure the node doesn't already exist
   for (int i = 0; i < MAX; i++) {
@@ -154,8 +160,7 @@ int makeNode(struct inode *fs, uint32_t cwd, char *name, char type) {
 void ls(struct inode *fs, uint32_t cwd) {
   for (int i = 0; i < MAX; i++) {
     if ((fs[i].type == 'd' || fs[i].type == 'f') && // skip empty slots
-        fs[i].parent == cwd &&                      // only this directory
-        fs[i].inode != fs[i].parent) {              // skip root's self-entry
+        fs[i].parent == cwd) {
       printf("inode: %u, type: %c, filename: %s\n", fs[i].inode, fs[i].type,
              fs[i].name);
     }
@@ -165,10 +170,14 @@ void ls(struct inode *fs, uint32_t cwd) {
 void loadNodes(struct inode *fs, FILE *f) {
   struct inode e;
   while (fread(&e, sizeof e, 1, f) == 1) {
-    if (e.inode >= MAX)
+    if (e.inode >= MAX) {
+      fprintf(stderr, "invalid inode %u, ignored\n", e.inode);
       continue;
-    if (e.type != 'd' && e.type != 'f')
+    }
+    if (e.type != 'd' && e.type != 'f') {
+      fprintf(stderr, "invalid type for inode %u, ignored\n", e.inode);
       continue;
+    }
     fs[e.inode] = e;
   }
 }
@@ -208,8 +217,19 @@ int main(int argc, char **argv) {
     printf("> ");
     if (!fgets(buf, sizeof buf, stdin))
       break;
+    int extra = 0;
     int outcome = get_cmd(buf);
-    char *args = get_argument(buf);
+    char *args = get_argument(buf, &extra);
+
+    if ((outcome == 0 || outcome == 2) && args != NULL) {
+      fprintf(stderr, "%s takes no arguments\n", outcome == 0 ? "exit" : "ls");
+      continue;
+    }
+    if ((outcome == 1 || outcome == 3 || outcome == 4) &&
+        (args == NULL || extra)) {
+      fprintf(stderr, "expected exactly one name\n");
+      continue;
+    }
 
     switch (outcome) {
     case 0:
